@@ -11,6 +11,33 @@ Tian Fang, Yanghai Tsin, Stephan Richter and Vladlen Koltun_.
 
 We present SHARP, an approach to photorealistic view synthesis from a single image. Given a single photograph, SHARP regresses the parameters of a 3D Gaussian representation of the depicted scene. This is done in less than a second on a standard GPU via a single feedforward pass through a neural network. The 3D Gaussian representation produced by SHARP can then be rendered in real time, yielding high-resolution photorealistic images for nearby views. The representation is metric, with absolute scale, supporting metric camera movements. Experimental results demonstrate that SHARP delivers robust zero-shot generalization across datasets. It sets a new state of the art on multiple datasets, reducing LPIPS by 25–34% and DISTS by 21–43% versus the best prior model, while lowering the synthesis time by three orders of magnitude.
 
+## Fork Changes: External Depth Map Injection
+
+This fork adds support for replacing SHARP's internal depth estimator with external monocular depth maps (e.g. Apple Depth Pro, Depth Anything V2). SHARP's built-in DINOv2+DPT depth can produce flat results on certain subjects — external depth sources often capture significantly more detail.
+
+**New CLI flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--external-depth` | None | Path to `.npy` depth map or directory of `.npy` files |
+| `--depth-format` | `auto` | `metric`, `relative`, `inverse-relative`, or `auto` |
+| `--depth-scale` | 1.0 | Multiply depth values — `<1.0` = closer, `>1.0` = farther |
+| `--depth-offset` | 0.0 | Add meters after scaling — positive = farther, negative = closer |
+| `--back-surface-factor` | 1.0 | 1.0 = ratio mode (recommended). `>1.0` = fixed multiplier |
+| `--save-internal-depth` | false | Save SHARP's own depth as `.npy` for comparison |
+
+**Quick example:**
+```bash
+sharp predict -i photo.jpg -o out/ \
+  --external-depth depth_pro.npy \
+  --depth-format metric \
+  --depth-scale 0.85
+```
+
+Batch processing scripts for PowerShell and Bash are in `scripts/`. Full technical details in [EXTERNAL_DEPTH.md](EXTERNAL_DEPTH.md).
+
+---
+
 ## Getting started
 
 We recommend to first create a python environment:

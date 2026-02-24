@@ -164,3 +164,16 @@ cython_debug/
 .DS_STORE
 *.pt
 .aider*
+
+# Output artifacts
+*.ply
+*.npy
+outputs/
+shared/
+
+# Images (don't commit test data)
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.HEIC

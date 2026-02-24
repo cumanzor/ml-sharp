@@ -105,6 +105,7 @@ class RGBGaussianPredictor(nn.Module):
         image: torch.Tensor,
         disparity_factor: torch.Tensor,
         depth: torch.Tensor | None = None,
+        external_depth: torch.Tensor | None = None,
     ) -> Gaussians3D:
         """Predict 3D Gaussians.
 
@@ -129,6 +130,21 @@ class RGBGaussianPredictor(nn.Module):
 
         disparity_factor = disparity_factor[:, None, None, None]
         monodepth = disparity_factor / monodepth_disparity.clamp(min=1e-4, max=1e4)
+
+        # Optionally replace internal depth with an external depth map.
+        # The monodepth model still ran above — we keep its encoder features
+        # (monodepth_output.output_features) but discard its depth values.
+        self._internal_monodepth = monodepth
+        if external_depth is not None:
+            if external_depth.shape[1] == 1 and monodepth.shape[1] == 2:
+                # Single-layer external depth: derive back surface from the
+                # internal model's learned front/back ratio, so the network
+                # sees a familiar separation instead of a fixed offset.
+                ratio = monodepth[:, 1:2] / monodepth[:, 0:1].clamp(min=1e-4)
+                external_depth = torch.cat(
+                    [external_depth, external_depth * ratio], dim=1
+                )
+            monodepth = external_depth
 
         # In the model we apply additional alignment to provided ground truth depth
         # as well as additional normalization.

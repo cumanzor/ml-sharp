@@ -73,6 +73,47 @@ DEFAULT_MODEL_URL = "https://ml-site.cdn-apple.com/models/sharp/sharp_2572gikvuh
     help="Device to run on. ['cpu', 'mps', 'cuda']",
 )
 @click.option("-v", "--verbose", is_flag=True, help="Activate debug logs.")
+@click.option(
+    "--external-depth",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="Path to a .npy depth map, or a directory of .npy files matched by image stem.",
+)
+@click.option(
+    "--depth-format",
+    type=click.Choice(["auto", "metric", "relative", "inverse-relative"], case_sensitive=False),
+    default="auto",
+    help="Format of the external depth map. 'metric' = meters, 'relative' = [0,1], "
+    "'inverse-relative' = large disparity-like values (e.g. Depth Anything V2). "
+    "'auto' attempts heuristic detection.",
+)
+@click.option(
+    "--back-surface-factor",
+    type=float,
+    default=1.0,
+    help="Back surface mode. Default 1.0 = derive back layer from SHARP's internal "
+    "front/back ratio (recommended). Values > 1.0 override with a fixed multiplier.",
+)
+@click.option(
+    "--depth-scale",
+    type=float,
+    default=1.0,
+    help="Multiply external depth values by this factor. <1.0 = closer, >1.0 = farther. "
+    "Useful for per-image fine-tuning (e.g. 0.8 pulls scene 20%% closer).",
+)
+@click.option(
+    "--depth-offset",
+    type=float,
+    default=0.0,
+    help="Add a constant offset (in meters) to external depth after scaling. "
+    "Positive = push farther, negative = pull closer.",
+)
+@click.option(
+    "--save-internal-depth",
+    is_flag=True,
+    default=False,
+    help="Save SHARP's own internal depth as .npy alongside the .ply (for comparison/debugging).",
+)
 def predict_cli(
     input_path: Path,
     output_path: Path,
@@ -80,6 +121,12 @@ def predict_cli(
     with_rendering: bool,
     device: str,
     verbose: bool,
+    external_depth: Path | None,
+    depth_format: str,
+    back_surface_factor: float,
+    depth_scale: float,
+    depth_offset: float,
+    save_internal_depth: bool,
 ):
     """Predict Gaussians from input images."""
     logging_utils.configure(logging.DEBUG if verbose else logging.INFO)
@@ -128,6 +175,13 @@ def predict_cli(
 
     output_path.mkdir(exist_ok=True, parents=True)
 
+    if external_depth is not None and external_depth.is_file() and len(image_paths) > 1:
+        LOGGER.warning(
+            "Single depth map provided for %d images — the same depth will be "
+            "used for all. Pass a directory of .npy files for per-image depth.",
+            len(image_paths),
+        )
+
     for image_path in image_paths:
         LOGGER.info("Processing %s", image_path)
         image, _, f_px = io.load_rgb(image_path)
@@ -142,7 +196,24 @@ def predict_cli(
             device=device,
             dtype=torch.float32,
         )
-        gaussians = predict_image(gaussian_predictor, image, f_px, torch.device(device))
+
+        # Resolve per-image depth path.
+        depth_path = _resolve_depth_path(external_depth, image_path) if external_depth else None
+
+        gaussians = predict_image(
+            gaussian_predictor, image, f_px, torch.device(device),
+            external_depth_path=depth_path,
+            depth_format=depth_format,
+            back_surface_factor=back_surface_factor,
+            depth_scale=depth_scale,
+            depth_offset=depth_offset,
+        )
+
+        if save_internal_depth:
+            depth_npy = gaussian_predictor._internal_monodepth.cpu().numpy()
+            depth_npy_path = output_path / f"{image_path.stem}_internal_depth.npy"
+            np.save(str(depth_npy_path), depth_npy)
+            LOGGER.info("Saved internal depth to %s", depth_npy_path)
 
         LOGGER.info("Saving 3DGS to %s", output_path)
         save_ply(gaussians, f_px, (height, width), output_path / f"{image_path.stem}.ply")
@@ -155,12 +226,121 @@ def predict_cli(
             render_gaussians(gaussians, metadata, output_video_path)
 
 
+def _resolve_depth_path(external_depth: Path, image_path: Path) -> Path | None:
+    """Resolve the depth .npy file for a given image."""
+    if external_depth.is_file():
+        return external_depth
+    # Directory mode: look for <stem>.npy matching the image name.
+    candidate = external_depth / f"{image_path.stem}.npy"
+    if candidate.exists():
+        return candidate
+    LOGGER.warning(
+        "No depth map found for %s (expected %s) — using internal depth.",
+        image_path.name, candidate,
+    )
+    return None
+
+
+def _prepare_external_depth(
+    depth_path: Path,
+    depth_format: str,
+    back_surface_factor: float,
+    internal_shape: tuple[int, int],
+    device: torch.device,
+    depth_scale: float = 1.0,
+    depth_offset: float = 0.0,
+) -> torch.Tensor:
+    """Load an external depth map and prepare it for SHARP's predictor.
+
+    Returns a (1, 1, H, W) or (1, 2, H, W) tensor depending on back_surface_factor.
+    """
+    raw = np.load(str(depth_path)).astype(np.float32)
+
+    # Squeeze to 2D regardless of how the .npy was saved.
+    raw = raw.squeeze()
+    if raw.ndim == 3:
+        # Multi-channel remains — take first slice from the smallest axis.
+        raw = np.take(raw, 0, axis=int(np.argmin(raw.shape)))
+
+    LOGGER.info(
+        "Loaded external depth: shape=%s, range=[%.4f, %.4f]",
+        raw.shape, raw.min(), raw.max(),
+    )
+
+    # Auto-detect format from value range.
+    if depth_format == "auto":
+        vmin, vmax = float(raw.min()), float(raw.max())
+        if vmax <= 1.5 and vmin >= -0.1:
+            depth_format = "relative"
+        elif vmax > 50:
+            depth_format = "inverse-relative"
+        else:
+            depth_format = "metric"
+        LOGGER.info("Auto-detected depth format: %s", depth_format)
+
+    # Convert to metric depth (meters).
+    if depth_format == "metric":
+        depth = raw
+    elif depth_format == "relative":
+        # Map [0, 1] → [1, 10] metres — a reasonable portrait range.
+        depth = raw * 9.0 + 1.0
+    elif depth_format == "inverse-relative":
+        # DA V2 outputs large disparity-like values; invert to get depth.
+        safe = np.clip(raw, 1e-3, None)
+        depth = 1.0 / safe
+        # Normalise so the median depth maps to ~3 m (typical subject distance).
+        median_val = float(np.median(depth[depth > 0]))
+        if median_val > 0:
+            depth = depth * (3.0 / median_val)
+    else:
+        raise ValueError(f"Unknown depth format: {depth_format}")
+
+    # Apply per-run scale and offset adjustments.
+    if depth_scale != 1.0 or depth_offset != 0.0:
+        depth = depth * depth_scale + depth_offset
+        LOGGER.info(
+            "Depth adjusted: scale=%.3f, offset=%.3f → range=[%.4f, %.4f]",
+            depth_scale, depth_offset, depth.min(), depth.max(),
+        )
+
+    depth = np.clip(depth, 1e-3, 100.0)
+
+    # To tensor → resize to SHARP's internal resolution.
+    depth_t = torch.from_numpy(depth).float().to(device)[None, None]  # (1, 1, H, W)
+    depth_t = F.interpolate(
+        depth_t, size=internal_shape, mode="bilinear", align_corners=True,
+    )
+
+    # Return single-layer depth (1, 1, H, W). The predictor will expand to
+    # 2 layers using the internal model's learned front/back ratio, unless
+    # back_surface_factor is set to override with a fixed multiplier.
+    if back_surface_factor != 1.0:
+        depth_2layer = torch.cat([depth_t, depth_t * back_surface_factor], dim=1)
+        LOGGER.info(
+            "External depth ready (fixed 2-layer, factor=%.3f): shape=%s, range=[%.4f, %.4f]",
+            back_surface_factor, list(depth_2layer.shape),
+            depth_2layer.min().item(), depth_2layer.max().item(),
+        )
+        return depth_2layer
+
+    LOGGER.info(
+        "External depth ready (1-layer, ratio mode): shape=%s, range=[%.4f, %.4f]",
+        list(depth_t.shape), depth_t.min().item(), depth_t.max().item(),
+    )
+    return depth_t
+
+
 @torch.no_grad()
 def predict_image(
     predictor: RGBGaussianPredictor,
     image: np.ndarray,
     f_px: float,
     device: torch.device,
+    external_depth_path: Path | None = None,
+    depth_format: str = "auto",
+    back_surface_factor: float = 1.05,
+    depth_scale: float = 1.0,
+    depth_offset: float = 0.0,
 ) -> Gaussians3D:
     """Predict Gaussians from an image."""
     internal_shape = (1536, 1536)
@@ -177,9 +357,18 @@ def predict_image(
         align_corners=True,
     )
 
+    # Prepare external depth if provided.
+    ext_depth_tensor = None
+    if external_depth_path is not None:
+        ext_depth_tensor = _prepare_external_depth(
+            external_depth_path, depth_format, back_surface_factor,
+            internal_shape, device,
+            depth_scale=depth_scale, depth_offset=depth_offset,
+        )
+
     # Predict Gaussians in the NDC space.
     LOGGER.info("Running inference.")
-    gaussians_ndc = predictor(image_resized_pt, disparity_factor)
+    gaussians_ndc = predictor(image_resized_pt, disparity_factor, external_depth=ext_depth_tensor)
 
     LOGGER.info("Running postprocessing.")
     intrinsics = (

@@ -15,26 +15,16 @@ We present SHARP, an approach to photorealistic view synthesis from a single ima
 
 This fork adds support for replacing SHARP's internal depth estimator with external monocular depth maps (e.g. Apple Depth Pro, Depth Anything V2). SHARP's built-in DINOv2+DPT depth can produce flat results on certain subjects — external depth sources often capture significantly more detail.
 
-**New CLI flags:**
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--external-depth` | None | Path to `.npy` depth map or directory of `.npy` files |
-| `--depth-format` | `auto` | `metric`, `relative`, `inverse-relative`, or `auto` |
-| `--depth-scale` | 1.0 | Multiply depth values — `<1.0` = closer, `>1.0` = farther |
-| `--depth-offset` | 0.0 | Add meters after scaling — positive = farther, negative = closer |
-| `--back-surface-factor` | 1.0 | 1.0 = ratio mode (recommended). `>1.0` = fixed multiplier |
-| `--save-internal-depth` | false | Save SHARP's own depth as `.npy` for comparison |
-
-**Quick example:**
+**Quick start:**
 ```bash
 sharp predict -i photo.jpg -o out/ \
   --external-depth depth_pro.npy \
-  --depth-format metric \
-  --depth-scale 0.85
+  --depth-format metric
 ```
 
-Batch processing scripts for PowerShell and Bash are in `scripts/`. Full technical details in [EXTERNAL_DEPTH.md](EXTERNAL_DEPTH.md).
+The only flags you need are `--external-depth` (path to `.npy` file or directory) and `--depth-format metric`. Additional tuning flags (`--depth-scale`, `--depth-offset`, `--back-surface-factor`, `--save-internal-depth`) are available but the defaults work well — see [EXTERNAL_DEPTH.md](EXTERNAL_DEPTH.md) for details.
+
+Batch processing scripts for PowerShell and Bash are in `scripts/`.
 
 ---
 

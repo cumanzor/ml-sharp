@@ -61,9 +61,13 @@ New CLI options:
 |--------|------|---------|-------------|
 | `--external-depth` | PATH | None | `.npy` file or directory of `.npy` files (matched by image stem) |
 | `--depth-format` | Choice | `auto` | `metric`, `relative`, `inverse-relative`, or `auto` |
-| `--back-surface-factor` | float | 1.0 | 1.0 = ratio mode (recommended). >1.0 = fixed multiplier |
+
+Advanced tuning (defaults work well — only tweak if needed):
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
 | `--depth-scale` | float | 1.0 | Multiply depth values. <1.0 = closer, >1.0 = farther |
 | `--depth-offset` | float | 0.0 | Add meters after scaling. Positive = farther, negative = closer |
+| `--back-surface-factor` | float | 1.0 | 1.0 = ratio mode (recommended). >1.0 = fixed multiplier |
 | `--save-internal-depth` | flag | false | Save SHARP's own depth as `<stem>_internal_depth.npy` |
 
 New functions:
@@ -108,34 +112,6 @@ conda run -n sharp sharp predict \
   -i image.jpg -o output/ \
   --external-depth depth_pro.npy \
   --depth-format metric
-```
-
-### Per-image depth tuning
-
-```bash
-# Scene feels too far — pull 20% closer
-conda run -n sharp sharp predict \
-  -i photo.jpg -o out/ \
-  --external-depth depth.npy --depth-format metric \
-  --depth-scale 0.8
-
-# Scene feels too close — push 30% farther
-conda run -n sharp sharp predict \
-  -i photo.jpg -o out/ \
-  --external-depth depth.npy --depth-format metric \
-  --depth-scale 1.3
-
-# Fine nudge — everything 0.5m closer
-conda run -n sharp sharp predict \
-  -i photo.jpg -o out/ \
-  --external-depth depth.npy --depth-format metric \
-  --depth-offset -0.5
-
-# Combine scale + offset
-conda run -n sharp sharp predict \
-  -i photo.jpg -o out/ \
-  --external-depth depth.npy --depth-format metric \
-  --depth-scale 0.9 --depth-offset -0.3
 ```
 
 ### Batch with depth directory
@@ -183,6 +159,22 @@ cp patches/predict.py    ml-sharp/src/sharp/cli/predict.py
 - SHARP depth layers: 2 (front + back surface)
 - Output: 3DGS `.ply` (~63 MB per image)
 - DA V2 metric checkpoints: `C:\AI\DepthAnythingV2\checkpoints\`
+
+## Advanced: Per-Image Depth Tuning
+
+The defaults (`--depth-scale 1.0 --depth-offset 0.0`) work well for the vast majority of images. If a specific result needs adjustment, these flags are available:
+
+- **`--depth-scale`**: Multiplies all depth values. `0.8` = 20% closer, `1.2` = 20% farther. Works proportionally — safe for any depth range.
+- **`--depth-offset`**: Adds a flat amount in meters. Risky on close subjects (can push depth to zero/negative → gets clamped to 0.001m). Prefer `--depth-scale` in most cases.
+
+```bash
+# Example: pull scene 15% closer
+sharp predict -i photo.jpg -o out/ \
+  --external-depth depth.npy --depth-format metric \
+  --depth-scale 0.85
+```
+
+Testing across multiple subjects (people, pets, vehicles, close-ups) showed minimal visual difference between scale values in the 0.6–1.2 range. The Depth Pro metric output is already well-calibrated.
 
 ## Known Limitations
 

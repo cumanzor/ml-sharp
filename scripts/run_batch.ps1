@@ -1,5 +1,3 @@
-$ErrorActionPreference = "Stop"
-
 $CONDA = "C:\Users\cuman\miniconda3\condabin\conda.bat"
 $INPUT_DIR = "C:\Users\cuman\shared\inputs"
 $OUTPUT_ROOT = "C:\Users\cuman\shared\outputs"
@@ -8,6 +6,7 @@ $TIMESTAMP = Get-Date -Format "yyyyMMdd_HHmmss"
 $OUTPUT_DIR = "$OUTPUT_ROOT\$TIMESTAMP"
 $DEPTH_DIR = "$OUTPUT_DIR\_depth_npy"
 $TMPDIR = "$OUTPUT_DIR\_tmp"
+$SCRIPT_DIR = $PSScriptRoot
 
 New-Item -ItemType Directory -Force -Path $DEPTH_DIR | Out-Null
 
@@ -35,10 +34,11 @@ foreach ($img in $IMAGES) {
     $stem = $img.BaseName
     Write-Host "  Depth Pro: $stem"
     if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
-    & $CONDA run -n sharp python "$PSScriptRoot\depth_compare.py" `
-        --input "$($img.FullName)" `
-        --output "$TMPDIR" `
-        --models depth_pro
+    cmd /c "$CONDA run -n sharp python `"$SCRIPT_DIR\depth_compare.py`" --input `"$($img.FullName)`" --output `"$TMPDIR`" --models depth_pro"
+    if (-not (Test-Path "$TMPDIR\depth_pro\depth.npy")) {
+        Write-Host "  ERROR: Depth Pro failed for $stem — skipping"
+        continue
+    }
     Copy-Item "$TMPDIR\depth_pro\depth.npy" "$DEPTH_DIR\$stem.npy"
 }
 if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
@@ -56,21 +56,22 @@ foreach ($img in $IMAGES) {
 
     Write-Host "  SHARP: $stem"
     if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
-    & $CONDA run -n sharp sharp predict `
-        -i "$($img.FullName)" `
-        -o "$TMPDIR" `
-        --external-depth "$npy" `
-        --depth-format metric
-    Move-Item "$TMPDIR\$stem.ply" "$OUTPUT_DIR\$stem.ply"
+    cmd /c "$CONDA run -n sharp sharp predict -i `"$($img.FullName)`" -o `"$TMPDIR`" --external-depth `"$npy`" --depth-format metric"
+    if (Test-Path "$TMPDIR\$stem.ply") {
+        Move-Item "$TMPDIR\$stem.ply" "$OUTPUT_DIR\$stem.ply"
+    } else {
+        Write-Host "  ERROR: SHARP failed for $stem — skipping"
+    }
 }
 if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
 
 # Cleanup
-Remove-Item -Recurse -Force $DEPTH_DIR
+if (Test-Path $DEPTH_DIR) { Remove-Item -Recurse -Force $DEPTH_DIR }
 
 Write-Host ""
 Write-Host "============================================"
 Write-Host "  Done! $(Get-Date)"
 Write-Host "  Output: $OUTPUT_DIR"
 Write-Host "============================================"
-Get-ChildItem "$OUTPUT_DIR\*.ply" | Format-Table Name, @{N="Size(MB)";E={[math]::Round($_.Length/1MB,1)}} -AutoSize
+Get-ChildItem "$OUTPUT_DIR\*.ply" -ErrorAction SilentlyContinue |
+    Format-Table Name, @{N="Size(MB)";E={[math]::Round($_.Length/1MB,1)}} -AutoSize

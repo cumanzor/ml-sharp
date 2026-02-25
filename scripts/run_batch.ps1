@@ -34,9 +34,12 @@ foreach ($img in $IMAGES) {
     $stem = $img.BaseName
     Write-Host "  Depth Pro: $stem"
     if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
-    cmd /c "$CONDA run -n sharp python `"$SCRIPT_DIR\depth_compare.py`" --input `"$($img.FullName)`" --output `"$TMPDIR`" --models depth_pro"
+    & $CONDA run -n sharp python "$SCRIPT_DIR\depth_compare.py" `
+        --input "$($img.FullName)" `
+        --output "$TMPDIR" `
+        --models depth_pro 2>&1 | Write-Host
     if (-not (Test-Path "$TMPDIR\depth_pro\depth.npy")) {
-        Write-Host "  ERROR: Depth Pro failed for $stem — skipping"
+        Write-Host "  ERROR: Depth Pro failed for $stem - skipping"
         continue
     }
     Copy-Item "$TMPDIR\depth_pro\depth.npy" "$DEPTH_DIR\$stem.npy"
@@ -50,17 +53,21 @@ foreach ($img in $IMAGES) {
     $stem = $img.BaseName
     $npy = "$DEPTH_DIR\$stem.npy"
     if (-not (Test-Path $npy)) {
-        Write-Host "  SKIP $stem (no depth map)"
+        Write-Host "  SKIP $stem - no depth map"
         continue
     }
 
     Write-Host "  SHARP: $stem"
     if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
-    cmd /c "$CONDA run -n sharp sharp predict -i `"$($img.FullName)`" -o `"$TMPDIR`" --external-depth `"$npy`" --depth-format metric"
+    & $CONDA run -n sharp sharp predict `
+        -i "$($img.FullName)" `
+        -o "$TMPDIR" `
+        --external-depth "$npy" `
+        --depth-format metric 2>&1 | Write-Host
     if (Test-Path "$TMPDIR\$stem.ply") {
         Move-Item "$TMPDIR\$stem.ply" "$OUTPUT_DIR\$stem.ply"
     } else {
-        Write-Host "  ERROR: SHARP failed for $stem — skipping"
+        Write-Host "  ERROR: SHARP failed for $stem - skipping"
     }
 }
 if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }

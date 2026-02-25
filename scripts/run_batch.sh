@@ -37,7 +37,7 @@ for img in "${IMAGES[@]}"; do
     stem=$(basename "${img%.*}")
     echo "  Depth Pro: $stem"
     rm -rf "$TMPDIR"
-    $CONDA run -n sharp python /c/Users/cuman/sharp-custom/scripts/depth_compare.py \
+    $CONDA run -n sharp python "$(dirname "$0")/depth_compare.py" \
         --input "$img" \
         --output "$TMPDIR" \
         --models depth_pro

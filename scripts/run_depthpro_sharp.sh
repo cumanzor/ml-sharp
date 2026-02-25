@@ -19,7 +19,7 @@ for img in "$INPUT_DIR"/*.{jpg,png,jpeg,heic,HEIC,JPG,PNG,JPEG}; do
     echo ""
     echo "--- Depth Pro: $stem ---"
     rm -rf "$TEMP_DIR"
-    $CONDA run -n sharp python /c/Users/cuman/sharp-custom/scripts/depth_compare.py \
+    $CONDA run -n sharp python "$(dirname "$0")/depth_compare.py" \
         --input "$img" \
         --output "$TEMP_DIR" \
         --models depth_pro

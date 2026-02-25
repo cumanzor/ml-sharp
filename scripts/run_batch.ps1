@@ -35,7 +35,7 @@ foreach ($img in $IMAGES) {
     $stem = $img.BaseName
     Write-Host "  Depth Pro: $stem"
     if (Test-Path $TMPDIR) { Remove-Item -Recurse -Force $TMPDIR }
-    & $CONDA run -n sharp python C:\Users\cuman\sharp-custom\scripts\depth_compare.py `
+    & $CONDA run -n sharp python "$PSScriptRoot\depth_compare.py" `
         --input "$($img.FullName)" `
         --output "$TMPDIR" `
         --models depth_pro

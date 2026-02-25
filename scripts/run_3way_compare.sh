@@ -11,7 +11,7 @@ STEM=$(basename "${IMG%.*}")
 
 # Step 1: Generate depth maps
 echo "=== Generating depth maps ==="
-$CONDA run -n sharp python /c/Users/cuman/sharp-custom/scripts/depth_compare.py \
+$CONDA run -n sharp python "$(dirname "$0")/depth_compare.py" \
   --input "$IMG" --output "$DEPTHDIR" --models depth_pro depth_anything
 
 # Step 2: Run SHARP with each depth source
